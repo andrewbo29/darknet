@@ -9,13 +9,27 @@
 #include "opencv2/highgui/highgui_c.h"
 #endif
 
-char *voc_names[] = {"aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"};
-image voc_labels[20];
+#include <dirent.h>
+
+//char *voc_names[] = {"aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"};
+//image voc_labels[20];
+
+char *voc_names[] = {"face"};
+image voc_labels[1];
 
 void train_yolo(char *cfgfile, char *weightfile)
 {
-    char *train_images = "/data/voc/train.txt";
-    char *backup_directory = "/home/pjreddie/backup/";
+//    char *train_images = "/data/voc/train.txt";
+//    char *backup_directory = "/home/pjreddie/backup/";
+
+   char *train_images = "/media/datab/bases/aflw/train.txt";
+    // char *train_images = "/media/datab/bases/faces_base/train.txt";
+   
+   // char *backup_directory = "/media/datac/andrew_workspace/darknet_backup";
+   char *backup_directory = "/home/boyarov/darknet_backup";
+
+    char *log_filename = "log.txt";
+
     srand(time(0));
     data_seed = time(0);
     char *base = basecfg(cfgfile);
@@ -56,6 +70,9 @@ void train_yolo(char *cfgfile, char *weightfile)
     pthread_t load_thread = load_data_in_thread(args);
     clock_t time;
     //while(i*imgs < N*120){
+
+    FILE *log_file = fopen(log_filename, "w");
+
     while(get_current_batch(net) < net.max_batches){
         i += 1;
         time=clock();
@@ -71,6 +88,7 @@ void train_yolo(char *cfgfile, char *weightfile)
         avg_loss = avg_loss*.9 + loss*.1;
 
         printf("%d: %f, %f avg, %f rate, %lf seconds, %d images\n", i, loss, avg_loss, get_current_rate(net), sec(clock()-time), i*imgs);
+        fprintf(log_file, "%d: %f\n", i, loss);
         if(i%1000==0 || i == 600){
             char buff[256];
             sprintf(buff, "%s/%s_%d.weights", backup_directory, base, i);
@@ -78,6 +96,9 @@ void train_yolo(char *cfgfile, char *weightfile)
         }
         free_data(train);
     }
+
+    fclose(log_file);
+
     char buff[256];
     sprintf(buff, "%s/%s_final.weights", backup_directory, base);
     save_weights(net, buff);
@@ -343,10 +364,9 @@ void test_yolo(char *cfgfile, char *weightfile, char *filename, float thresh)
         printf("%s: Predicted in %f seconds.\n", input, sec(clock()-time));
         convert_yolo_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, thresh, probs, boxes, 0);
         if (nms) do_nms_sort(boxes, probs, l.side*l.side*l.n, l.classes, nms);
-        //draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, 20);
-        draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, 0, 20);
+//        draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, 20);
+        draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, 1);
         show_image(im, "predictions");
-        save_image(im, "predictions");
 
         show_image(sized, "resized");
         free_image(im);
@@ -406,7 +426,8 @@ void demo_yolo(char *cfgfile, char *weightfile, float thresh, int cam_index)
 void run_yolo(int argc, char **argv)
 {
     int i;
-    for(i = 0; i < 20; ++i){
+//    for(i = 0; i < 20; ++i){
+    for(i = 0; i < 1; ++i){
         char buff[256];
         sprintf(buff, "data/labels/%s.png", voc_names[i]);
         voc_labels[i] = load_image_color(buff, 0, 0);
@@ -422,9 +443,304 @@ void run_yolo(int argc, char **argv)
     char *cfg = argv[3];
     char *weights = (argc > 4) ? argv[4] : 0;
     char *filename = (argc > 5) ? argv[5]: 0;
+    char *resFilename = (argc > 6) ? argv[6]: 0;
     if(0==strcmp(argv[2], "test")) test_yolo(cfg, weights, filename, thresh);
     else if(0==strcmp(argv[2], "train")) train_yolo(cfg, weights);
     else if(0==strcmp(argv[2], "valid")) validate_yolo(cfg, weights);
     else if(0==strcmp(argv[2], "recall")) validate_yolo_recall(cfg, weights);
     else if(0==strcmp(argv[2], "demo")) demo_yolo(cfg, weights, thresh, cam_index);
+    else if(0==strcmp(argv[2], "print")) print_yolo(cfg, weights, filename, resFilename, thresh);
+    else if(0==strcmp(argv[2], "folder")) folder_yolo(cfg, weights, filename, thresh);
+    else if(0==strcmp(argv[2], "time")) time_yolo(cfg, weights, filename, thresh);
+}
+
+void print_yolo(char *cfgfile, char *weightfile, char *dirName, char *resDir, float thresh)
+{
+    network net = parse_network_cfg(cfgfile);
+    if (weightfile) {
+        load_weights(&net, weightfile);
+    }
+
+    char *ext = "-out.txt";
+
+    DIR *dir;
+    struct dirent *ent;
+    if ((dir = opendir(dirName)) != NULL) {
+        while ((ent = readdir(dir)) != NULL) {
+            char * fname = ent->d_name;
+            if (strlen(fname) > 5) {
+                char *fileFold = malloc(strlen(dirName) + strlen(fname) + 1);
+                strcpy(fileFold, dirName);
+                strcat(fileFold, fname);
+
+                char *fnameRes = fname + 5;
+                char *name = malloc(strlen(resDir) + strlen(fnameRes) + 1);
+                strcpy(name, resDir);
+                strcat(name, fnameRes);
+                char *lastdot = strrchr(name, '.');
+                if (lastdot != NULL) {
+                    *lastdot = '\0';
+                }
+                char *resFilename = malloc(strlen(name) + strlen(ext) + 1);
+                strcpy(resFilename, name);
+                strcat(resFilename, ext);
+
+                print_process_file(resFilename, fileFold, net, thresh);
+            }
+        }
+        closedir(dir);
+    }
+}
+
+void print_process_file(char *resFilename, char *fileFold, network net, float thresh)
+{
+    FILE *f = fopen(resFilename, "w");
+
+    FILE * fp;
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+
+    fp = fopen(fileFold, "r");
+
+    char *path = "/media/datab/bases/FDDB/";
+    char *ext = ".jpg";
+    while ((read = getline(&line, &len, fp)) != -1) {
+        line[strlen(line) - 1] = 0;
+        char *filename = malloc(strlen(path) + strlen(line) + strlen(ext) + 1);
+        strcpy(filename, path);
+        strcat(filename, line);
+        strcat(filename, ext);
+
+        print_yolo_file(f, filename, line, net, thresh);
+    }
+    fclose(fp);
+    if (line)
+        free(line);
+
+    fclose(f);
+}
+
+void print_yolo_file(FILE *f, char *filename, char *shortFilename, network net, float thresh)
+{
+    detection_layer l = net.layers[net.n - 1];
+    set_batch_network(&net, 1);
+    srand(2222222);
+    clock_t time;
+    char buff[256];
+    char *input = buff;
+    int j;
+    float nms = .5;
+    box *boxes = calloc(l.side * l.side * l.n, sizeof(box));
+    float **probs = calloc(l.side * l.side * l.n, sizeof(float *));
+    for (j = 0; j < l.side * l.side * l.n; ++j) probs[j] = calloc(l.classes, sizeof(float *));
+    strncpy(input, filename, 256);
+    image im = load_image_color(input, 0, 0);
+    image sized = resize_image(im, net.w, net.h);
+    float *X = sized.data;
+    time = clock();
+    float *predictions = network_predict(net, X);
+    printf("%s: Predicted in %f seconds.\n", input, sec(clock() - time));
+    convert_yolo_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, thresh, probs, boxes, 0);
+    if (nms) do_nms_sort(boxes, probs, l.side * l.side * l.n, l.classes, nms);
+
+    free_image(im);
+    free_image(sized);
+
+    int total = l.side*l.side*l.n;
+
+    double predThresh = .05;
+
+    int objNum = 0;
+    int k;
+    for(k = 0; k < total; ++k){
+        if (probs[k][0] > predThresh) {
+            objNum++;
+        }
+    }
+
+    fprintf(f, "%s\n%d\n", shortFilename, objNum);
+
+    int i;
+    for(i = 0; i < total; ++i){
+        if (probs[i][0] > predThresh) {
+            float xmin = (boxes[i].x - boxes[i].w/2.)*im.w;
+            float xmax = (boxes[i].x + boxes[i].w/2.)*im.w;
+            float ymin = (boxes[i].y - boxes[i].h/2.)*im.h;
+            float ymax = (boxes[i].y + boxes[i].h/2.)*im.h;
+
+            if (xmin < 0) xmin = 0;
+            if (ymin < 0) ymin = 0;
+            if (xmax > im.w) xmax = im.w;
+            if (ymax > im.h) ymax = im.h;
+
+            int x = (int)(xmin);
+            int y = (int)(ymin);
+            int w = (int)((xmax - xmin));
+            int h = (int)((ymax - ymin));
+
+            fprintf(f, "%d %d %d %d %f\n", x, y, w, h, probs[i][0]);
+        }
+    }
+}
+
+void folder_yolo(char *cfgfile, char *weightfile, char *dirName, float thresh)
+{
+    network net = parse_network_cfg(cfgfile);
+    if (weightfile) {
+        load_weights(&net, weightfile);
+    }
+
+    char *jpg = "jpg";
+
+    DIR *dir;
+    struct dirent *ent;
+    if ((dir = opendir(dirName)) != NULL) {
+        while ((ent = readdir(dir)) != NULL) {
+            char *fname = ent->d_name;
+            if (strlen(fname) > 3) {
+                char *dot = strrchr(fname, '.');
+                char *ext = dot + 1;
+
+                if (strcmp(ext, jpg) == 0) {
+                    char *filename = malloc(strlen(dirName) + strlen(fname) + 1);
+                    strcpy(filename, dirName);
+                    strcat(filename, fname);
+
+                    folder_yolo_file(filename, net, thresh);
+                }
+            }
+        }
+        closedir(dir);
+    }
+}
+
+void folder_yolo_file(char *filename, network net, float thresh)
+{
+    detection_layer l = net.layers[net.n - 1];
+    set_batch_network(&net, 1);
+    srand(2222222);
+    clock_t time;
+    char buff[256];
+    char *input = buff;
+    int j;
+    float nms = .5;
+    box *boxes = calloc(l.side * l.side * l.n, sizeof(box));
+    float **probs = calloc(l.side * l.side * l.n, sizeof(float *));
+    for (j = 0; j < l.side * l.side * l.n; ++j) probs[j] = calloc(l.classes, sizeof(float *));
+    strncpy(input, filename, 256);
+    image im = load_image_color(input, 0, 0);
+    image sized = resize_image(im, net.w, net.h);
+    float *X = sized.data;
+    time = clock();
+    float *predictions = network_predict(net, X);
+    printf("%s: Predicted in %f seconds.\n", input, sec(clock() - time));
+    convert_yolo_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, thresh, probs, boxes, 0);
+    if (nms) do_nms_sort(boxes, probs, l.side * l.side * l.n, l.classes, nms);
+
+    free_image(im);
+    free_image(sized);
+
+    int total = l.side*l.side*l.n;
+
+    double predThresh = .05;
+
+    int i;
+    int num = 0;
+    for(i = 0; i < total; ++i){
+        if (probs[i][0] > predThresh) {
+            char ext[20];
+            sprintf(ext, "_yolo_%d.face", num);
+            ++num;
+
+            char *resFilename = malloc(strlen(filename) + strlen(ext) + 1);
+            strcpy(resFilename, filename);
+            strcat(resFilename, ext);
+
+            FILE *f = fopen(resFilename, "w");
+
+            float xmin = (boxes[i].x - boxes[i].w/2.)*im.w;
+            float xmax = (boxes[i].x + boxes[i].w/2.)*im.w;
+            float ymin = (boxes[i].y - boxes[i].h/2.)*im.h;
+            float ymax = (boxes[i].y + boxes[i].h/2.)*im.h;
+
+            if (xmin < 0) xmin = 0;
+            if (ymin < 0) ymin = 0;
+            if (xmax > im.w) xmax = im.w;
+            if (ymax > im.h) ymax = im.h;
+
+            int x = (int)(xmin);
+            int y = (int)(ymin);
+            int w = (int)((xmax - xmin));
+            int h = (int)((ymax - ymin));
+
+            fprintf(f, "%d\t%d\t%d\t%d\n", x, y, w, h);
+
+            fclose(f);
+        }
+    }
+}
+
+void time_yolo(char *cfgfile, char *weightfile, char *dirName, float thresh)
+{
+    network net = parse_network_cfg(cfgfile);
+    if (weightfile) {
+        load_weights(&net, weightfile);
+    }
+
+    char *jpg = "jpg";
+
+    float sumTime = 0.;
+    int numTime = 0;
+
+    DIR *dir;
+    struct dirent *ent;
+    if ((dir = opendir(dirName)) != NULL) {
+        while ((ent = readdir(dir)) != NULL) {
+            char *fname = ent->d_name;
+            if (strlen(fname) > 3) {
+                char *dot = strrchr(fname, '.');
+                char *ext = dot + 1;
+
+                if (strcmp(ext, jpg) == 0) {
+                    char *filename = malloc(strlen(dirName) + strlen(fname) + 1);
+                    strcpy(filename, dirName);
+                    strcat(filename, fname);
+
+                    clock_t time;
+                    time = clock();
+                    time_yolo_file(filename, net, thresh);
+                    sumTime += sec(clock() - time);
+                    numTime += 1;
+                }
+            }
+        }
+        closedir(dir);
+    }
+
+    printf("Mean time: %f\n", sumTime / numTime);
+}
+
+void time_yolo_file(char *filename, network net, float thresh)
+{
+    detection_layer l = net.layers[net.n - 1];
+    set_batch_network(&net, 1);
+    srand(2222222);
+    char buff[256];
+    char *input = buff;
+    int j;
+    float nms = .5;
+    box *boxes = calloc(l.side * l.side * l.n, sizeof(box));
+    float **probs = calloc(l.side * l.side * l.n, sizeof(float *));
+    for (j = 0; j < l.side * l.side * l.n; ++j) probs[j] = calloc(l.classes, sizeof(float *));
+    strncpy(input, filename, 256);
+    image im = load_image_color(input, 0, 0);
+    image sized = resize_image(im, net.w, net.h);
+    float *X = sized.data;
+    float *predictions = network_predict(net, X);
+    convert_yolo_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, thresh, probs, boxes, 0);
+    if (nms) do_nms_sort(boxes, probs, l.side * l.side * l.n, l.classes, nms);
+
+    free_image(im);
+    free_image(sized);
 }

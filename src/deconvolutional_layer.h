@@ -2,6 +2,7 @@
 #define DECONVOLUTIONAL_LAYER_H
 
 #include "cuda.h"
+#include "params.h"
 #include "image.h"
 #include "activations.h"
 #include "layer.h"
