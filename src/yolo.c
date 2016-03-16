@@ -25,8 +25,8 @@ void train_yolo(char *cfgfile, char *weightfile)
    char *train_images = "/media/datab/bases/aflw/train.txt";
     // char *train_images = "/media/datab/bases/faces_base/train.txt";
    
-   // char *backup_directory = "/media/datac/andrew_workspace/darknet_backup";
-   char *backup_directory = "/home/boyarov/darknet_backup";
+    char *backup_directory = "/media/datac/andrew_workspace/darknet_backup";
+//   char *backup_directory = "/home/boyarov/darknet_backup";
 
     char *log_filename = "log.txt";
 
@@ -368,9 +368,9 @@ void test_yolo(char *cfgfile, char *weightfile, char *filename, float thresh)
         draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, 1);
         show_image(im, "predictions");
 
-        show_image(sized, "resized");
+//        show_image(sized, "resized");
         free_image(im);
-        free_image(sized);
+//        free_image(sized);
 #ifdef OPENCV
         cvWaitKey(0);
         cvDestroyAllWindows();
@@ -440,18 +440,28 @@ void run_yolo(int argc, char **argv)
         return;
     }
 
-    char *cfg = argv[3];
-    char *weights = (argc > 4) ? argv[4] : 0;
-    char *filename = (argc > 5) ? argv[5]: 0;
-    char *resFilename = (argc > 6) ? argv[6]: 0;
-    if(0==strcmp(argv[2], "test")) test_yolo(cfg, weights, filename, thresh);
-    else if(0==strcmp(argv[2], "train")) train_yolo(cfg, weights);
-    else if(0==strcmp(argv[2], "valid")) validate_yolo(cfg, weights);
-    else if(0==strcmp(argv[2], "recall")) validate_yolo_recall(cfg, weights);
-    else if(0==strcmp(argv[2], "demo")) demo_yolo(cfg, weights, thresh, cam_index);
-    else if(0==strcmp(argv[2], "print")) print_yolo(cfg, weights, filename, resFilename, thresh);
-    else if(0==strcmp(argv[2], "folder")) folder_yolo(cfg, weights, filename, thresh);
-    else if(0==strcmp(argv[2], "time")) time_yolo(cfg, weights, filename, thresh);
+    if (0==strcmp(argv[2], "validate")) {
+        char *cfg_detect = argv[3];
+        char *weights_detect = argv[4];
+        char *cfg_validate = argv[5];
+        char *weights_validate = argv[6];
+        char *filename = argv[7];
+        detect_validate(cfg_detect, weights_detect, cfg_validate, weights_validate, filename, thresh);
+    }
+    else {
+        char *cfg = argv[3];
+        char *weights = (argc > 4) ? argv[4] : 0;
+        char *filename = (argc > 5) ? argv[5] : 0;
+        char *resFilename = (argc > 6) ? argv[6] : 0;
+        if (0 == strcmp(argv[2], "test")) test_yolo(cfg, weights, filename, thresh);
+        else if (0 == strcmp(argv[2], "train")) train_yolo(cfg, weights);
+        else if (0 == strcmp(argv[2], "valid")) validate_yolo(cfg, weights);
+        else if (0 == strcmp(argv[2], "recall")) validate_yolo_recall(cfg, weights);
+        else if (0 == strcmp(argv[2], "demo")) demo_yolo(cfg, weights, thresh, cam_index);
+        else if (0 == strcmp(argv[2], "print")) print_yolo(cfg, weights, filename, resFilename, thresh);
+        else if (0 == strcmp(argv[2], "folder")) folder_yolo(cfg, weights, filename, thresh);
+        else if (0 == strcmp(argv[2], "time")) time_yolo(cfg, weights, filename, thresh);
+    }
 }
 
 void print_yolo(char *cfgfile, char *weightfile, char *dirName, char *resDir, float thresh)
@@ -711,6 +721,7 @@ void time_yolo(char *cfgfile, char *weightfile, char *dirName, float thresh)
                     time = clock();
                     time_yolo_file(filename, net, thresh);
                     sumTime += sec(clock() - time);
+                    printf("%s: %f\n", filename, sec(clock() - time));
                     numTime += 1;
                 }
             }
@@ -743,4 +754,103 @@ void time_yolo_file(char *filename, network net, float thresh)
 
     free_image(im);
     free_image(sized);
+}
+
+void detect_validate(char *cfgfile_detect, char *weightfile_detect, char *cfgfile_validate, char *weightfile_validate, char *filename, float thresh)
+{
+    network detect_net = parse_network_cfg(cfgfile_detect);
+    if(weightfile_detect){
+        load_weights(&detect_net, weightfile_detect);
+    }
+
+    network validate_net = parse_network_cfg(cfgfile_validate);
+    if(weightfile_validate){
+        load_weights(&validate_net, weightfile_validate);
+    }
+
+    detection_layer l = detect_net.layers[detect_net.n - 1];
+    set_batch_network(&detect_net, 1);
+    srand(2222222);
+    clock_t time;
+    char buff[256];
+    char *input = buff;
+    int j;
+    float nms = .5;
+    box *boxes = calloc(l.side * l.side * l.n, sizeof(box));
+    float **probs = calloc(l.side * l.side * l.n, sizeof(float *));
+    for (j = 0; j < l.side * l.side * l.n; ++j) probs[j] = calloc(l.classes, sizeof(float *));
+    strncpy(input, filename, 256);
+    image im = load_image_color(input, 0, 0);
+    image sized = resize_image(im, detect_net.w, detect_net.h);
+    float *X = sized.data;
+    time = clock();
+    float *predictions = network_predict(detect_net, X);
+    convert_yolo_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, thresh, probs, boxes, 0);
+    if (nms) do_nms_sort(boxes, probs, l.side * l.side * l.n, l.classes, nms);
+
+    int total = l.side*l.side*l.n;
+
+    double predThresh = 0;
+
+    box *valid_boxes = calloc(l.side*l.side*l.n, sizeof(box));
+    float **valid_probs = calloc(l.side * l.side * l.n, sizeof(float *));
+    int index = 0;
+    int proposals_number = 0;
+    int i;
+    for(i = 0; i < total; ++i) {
+        if (probs[i][0] > predThresh) {
+            float xmin = (boxes[i].x - boxes[i].w / 2.) * im.w;
+            float xmax = (boxes[i].x + boxes[i].w / 2.) * im.w;
+            float ymin = (boxes[i].y - boxes[i].h / 2.) * im.h;
+            float ymax = (boxes[i].y + boxes[i].h / 2.) * im.h;
+
+            if (xmin < 0) xmin = 0;
+            if (ymin < 0) ymin = 0;
+            if (xmax > im.w) xmax = im.w;
+            if (ymax > im.h) ymax = im.h;
+
+            float x = xmin;
+            float y = ymin;
+            float w = xmax - xmin;
+            float h = ymax - ymin;
+
+            image proposal = crop_image(im, x, y, w, h);
+            ++proposals_number;
+            if (validate_image(validate_net, proposal)) {
+                valid_boxes[index] = boxes[i];
+                valid_probs[index] = probs[i];
+                ++index;
+            }
+        }
+    }
+
+    printf("%s: Predicted in %f seconds.\n", input, sec(clock() - time));
+    printf("Proposals number: %d, faces number: %d\n", proposals_number, index);
+
+    draw_detections(im, index, predThresh, valid_boxes, valid_probs, voc_names, voc_labels, 1);
+    show_image(im, "predictions");
+
+    free_image(im);
+    free_image(sized);
+
+    #ifdef OPENCV
+        cvWaitKey(0);
+        cvDestroyAllWindows();
+    #endif
+}
+
+int validate_image(network net, image im)
+{
+    set_batch_network(&net, 1);
+    srand(2222222);
+
+    float *X = im.data;
+    float *predictions = network_predict(net, X);
+
+    float pred_thresh = 0.5;
+    printf("%f\n", predictions[0]);
+    if (predictions[0] > pred_thresh) {
+        return 1;
+    }
+    return 0;
 }
