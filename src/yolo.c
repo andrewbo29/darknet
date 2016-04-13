@@ -25,8 +25,8 @@ void train_yolo(char *cfgfile, char *weightfile)
    char *train_images = "/media/datab/bases/aflw/train.txt";
     // char *train_images = "/media/datab/bases/faces_base/train.txt";
    
-    char *backup_directory = "/media/datac/andrew_workspace/darknet_backup";
-//   char *backup_directory = "/home/boyarov/darknet_backup";
+//    char *backup_directory = "/media/datac/andrew_workspace/darknet_backup";
+   char *backup_directory = "/home/boyarov/darknet_backup";
 
     char *log_filename = "log.txt";
 
